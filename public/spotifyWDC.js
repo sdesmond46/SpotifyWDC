@@ -28,9 +28,12 @@ var spotifyRequestor;
         tableau.password = JSON.stringify(SpotifyAuthentication.getTokens());
 
         var s = new SpotifyWebApi();
-        s.setAccessToken(SpotifyAuthentication.getAccessToken());
+        var accessToken = SpotifyAuthentication.getAccessToken();
+        // TODO - REMVOE ME!!!
+        console.log("Setting access token to '" + accessToken + "'")
+        s.setAccessToken(accessToken);
         spotifyRequestor = new SpotifyRequestor(s, tableau.connectionData, tableau.reportProgress);
-        
+
         console.log("Calling initCallback");
         initCallback();
 
@@ -41,8 +44,9 @@ var spotifyRequestor;
     };
 
     myConnector.getSchema = function(schemaCallback) {
-        console.log("getSchema called. Making request to ./schema.json");
-        $.getJSON( "./schema_advanced.json" )
+        var schemaUrl = "./schema_advanced.jsons";
+        console.log("getSchema called. Making request to " + schemaUrl);
+        $.getJSON(schemaUrl)
         .done(function(scehma_json) {
             console.log("call to get schema finished");
             schemaCallback(scehma_json.tables/*, scehma_json.standardConnections*/);
@@ -84,7 +88,7 @@ var spotifyRequestor;
 
     //-------------------------------Connector UI---------------------------//
 
-    $(document).ready(function() {  
+    $(document).ready(function() {
         $("#getdata").click(function() { // This event fires when a button is clicked
             setupConnector();
         });
@@ -96,7 +100,7 @@ var spotifyRequestor;
         tableau.authType = tableau.authTypeEnum.custom;
         tableau.submit();
     };
-    
+
     function toggleUIState(showContent) {
         if (showContent) {
             $('#spinner').css('display', 'none');

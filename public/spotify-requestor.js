@@ -18,7 +18,7 @@ SpotifyRequestor.prototype._runWithRetry = function(fn, actionDescription, retry
     function tryRunPromise() {
         return fn().then(function(data) {
             console.log("Promise '" + actionDescription + "' succeeded execution!");
-            return Promise.resolve(data); 
+            return Promise.resolve(data);
         }, function(err) {
             console.log("Error encountered. Current retryCount is = " + retryCount);
             if (retryCount > 0) {
@@ -26,8 +26,8 @@ SpotifyRequestor.prototype._runWithRetry = function(fn, actionDescription, retry
                 retryCount--;
                 return tryRunPromise();
             } else {
-                console.error("Out of retries, failing the call: " + actionDescription);
-                Promise.reject(err);
+                console.log("Out of retries, failing the call: " + actionDescription);
+                return Promise.reject(err.responseText);
             }
         });
     };
@@ -42,22 +42,19 @@ SpotifyRequestor.prototype._runWithRetry = function(fn, actionDescription, retry
 SpotifyRequestor.prototype._makeRequestAndProcessRows = function(description, fn, rowProcessor, rowAccessor) {
     console.log("Making request for " + description);
     rowAccessor = rowAccessor || function(data) { return data.items; };
-    return new Promise(function(resolve, reject) {
+     // Run this request using the retry logic we have
+     return this._runWithRetry(fn, description).then(function(data) {
+         console.log("Received Results for " + description + ". Number of rows: " + rowAccessor(data).length);
+         var toRet = rowAccessor(data).map(rowProcessor);
 
-         // Run this request using the retry logic we have
-         return this._runWithRetry(fn, description).then(function(data) {
-             console.log("Received Results for " + description + ". Number of rows: " + rowAccessor(data).length);
-             var toRet = rowAccessor(data).map(rowProcessor);
+        // Send back some paging information to the caller
+        var paging = {
+            offset : data.offset || 0,
+            total : data.total || 0
+        };
 
-            // Send back some paging information to the caller
-            var paging = {
-                offset : data.offset || 0,
-                total : data.total || 0
-            };
-
-            resolve({rows: toRet, paging: paging});
-         });
-    }.bind(this));
+        return Promise.resolve({rows: toRet, paging: paging});
+     });
 }
 
 // Helper function for paging through multiple requests. Takes the same parameters as _makeRequestAndProcessRows, but
@@ -71,14 +68,14 @@ SpotifyRequestor.prototype._makeRequestAndProcessRowsWithPaging = function(descr
     var getPage = function(limit, offset) {
         console.log("Getting a page of data with limit=" + limit + " and offset=" + offset);
         return this._makeRequestAndProcessRows(
-            description, 
+            description,
             fn.bind(this, {limit: limit, offset: offset}), // bind the limit and offset in here
             rowProcessor,
             rowAccessor).then(function(result) {
                 var nextOffset = result.paging.offset + this.defaultPageSize;
                 allRows = allRows.concat(result.rows);
                 var totalRows = result.paging.total < this.maxResults ? result.paging.total : this.maxResults;
-                
+
                 console.log("Received a page of data for " + description + ". nextOffset is "  + nextOffset + ". totalRows is " + result.paging.total + ". maxResults is " + this.maxResults);
 
                 // Report our progress to the progress reporting function which was passed in
@@ -129,7 +126,7 @@ SpotifyRequestor.prototype._getCollectionFromIds = function(ids, blockSize, desc
         // Create a promise for each block
         promises.push(this._makeRequestAndProcessRows(
             description,
-            fn.bind(this, idBlocks[i]), 
+            fn.bind(this, idBlocks[i]),
             rowProcessor,
             rowAccessor)
             .then(insertValues)
@@ -152,10 +149,10 @@ SpotifyRequestor.prototype.getMyTopArtists = function() {
     }
 
     return this._makeRequestAndProcessRows(
-        "getMyTopArtists", 
-        this.s.getMyTopArtists.bind(this, {time_range: this.timeRange, limit: 50}), 
+        "getMyTopArtists",
+        this.s.getMyTopArtists.bind(this, {time_range: this.timeRange, limit: 50}),
         function(artist) {
-            console.log("Processing item " + artist.name);              
+            console.log("Processing item " + artist.name);
             return {
                 "followers": artist.followers ? artist.followers.total : 0,
                 "genre1": artist.genres[0] || null,
@@ -183,10 +180,10 @@ SpotifyRequestor.prototype.getMyTopTracks = function() {
     }
 
     return this._makeRequestAndProcessRows(
-        "getMyTopTracks", 
-        this.s.getMyTopTracks.bind(this, {time_range: this.timeRange, limit: 50}), 
+        "getMyTopTracks",
+        this.s.getMyTopTracks.bind(this, {time_range: this.timeRange, limit: 50}),
         function(track) {
-            console.log("Processing track " + track.name);              
+            console.log("Processing track " + track.name);
             return {
                 "album_id": track.album.id,
                 "artist_id": track.artists[0].id,
@@ -216,10 +213,10 @@ SpotifyRequestor.prototype.getMySavedAlbums = function() {
     }
 
     return this._makeRequestAndProcessRowsWithPaging(
-        "getMySavedAlbums", 
+        "getMySavedAlbums",
         this.s.getMySavedAlbums.bind(this),
         function(albumObject) {
-            console.log("Processing album " + albumObject.album.name);              
+            console.log("Processing album " + albumObject.album.name);
             return {
                 "added_at": albumObject.added_at,
                 "artist_id": albumObject.album.artists[0].id,
@@ -248,10 +245,10 @@ SpotifyRequestor.prototype.getMySavedTracks = function() {
     }
 
     return this._makeRequestAndProcessRowsWithPaging(
-    "getMySavedTracks", 
+    "getMySavedTracks",
     this.s.getMySavedTracks.bind(this),
     function(trackObject) {
-        console.log("Processing track " + trackObject.track.name);              
+        console.log("Processing track " + trackObject.track.name);
         return {
             "added_at": trackObject.added_at,
             "album_id": trackObject.track.album.id,
@@ -272,7 +269,7 @@ SpotifyRequestor.prototype.getMySavedTracks = function() {
         return this.getTrackFeatures(ids).then(function(trackFeatures) {
             var finalResults = rows;
             for(var i = 0; i < trackFeatures.length; i++) {
-                for (var attrname in trackFeatures[i]) { 
+                for (var attrname in trackFeatures[i]) {
                     finalResults[i][attrname] = trackFeatures[i][attrname];
                 }
             }
@@ -319,8 +316,8 @@ SpotifyRequestor.prototype.getArtists = function(ids) {
 
     // Spotify only lets us request 50 artists at a time
     return this._getCollectionFromIds(ids, 50, "getArtists",
-        this.s.getArtists.bind(this), 
-        function(artist) {      
+        this.s.getArtists.bind(this),
+        function(artist) {
             return {
                 "followers": artist.followers ? artist.followers.total : 0,
                 "genre1": artist.genres[0] || null,
@@ -330,7 +327,7 @@ SpotifyRequestor.prototype.getArtists = function(ids) {
                 "image_link": artist.images[0] ? artist.images[0].url : null,
                 "name": artist.name,
                 "popularity":artist.popularity,
-                "uri": artist.uri                        
+                "uri": artist.uri
             };
         },
         function(data) { return data.artists; });
@@ -341,7 +338,7 @@ SpotifyRequestor.prototype.getTrackFeatures = function(ids) {
     // TODO - cache the tracks we have already retrieved by their id
 
     return this._getCollectionFromIds(ids, 100, "getTrackFeatures",
-        this.s.getAudioFeaturesForTracks.bind(this), 
+        this.s.getAudioFeaturesForTracks.bind(this),
         function(audioFeature) {
             var keyLookup = {
                 0 : "C",

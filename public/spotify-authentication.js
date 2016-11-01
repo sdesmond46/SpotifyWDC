@@ -25,6 +25,9 @@ var SpotifyAuthentication = {
         // We've saved off the access & refresh token to tableau.password
         if (tableau.password) {
             console.log("Grabbing authentication from tableau.password");
+
+            // TODO - REMOVE ME!!!!
+            console.log("tableau.password is " + tableau.password);
             result = JSON.parse(tableau.password);
         } else {
             console.log("Grabbing authentication from query hash")
@@ -36,7 +39,8 @@ var SpotifyAuthentication = {
 
     // Gets just the access token needed for making requests
     getAccessToken : function() {
-        return SpotifyAuthentication.getTokens().access_token;
+        // return SpotifyAuthentication.getTokens().access_token;
+        return SpotifyAuthentication.getTokens().toString();
     },
 
     // Note: Refresh tokens are valid forever, just need to get a new access token.
