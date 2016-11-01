@@ -39,8 +39,9 @@ var SpotifyAuthentication = {
 
     // Gets just the access token needed for making requests
     getAccessToken : function() {
-        // return SpotifyAuthentication.getTokens().access_token;
-        return SpotifyAuthentication.getTokens().toString();
+        var tokens = SpotifyAuthentication.getTokens();
+        return tokens.toString();
+        // return tokens.access_token;
     },
 
     // Note: Refresh tokens are valid forever, just need to get a new access token.
