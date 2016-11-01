@@ -21,6 +21,7 @@ SpotifyRequestor.prototype._runWithRetry = function(fn, actionDescription, retry
             return Promise.resolve(data);
         }, function(err) {
             console.log("Error encountered. Current retryCount is = " + retryCount);
+            console.log("Error was: " + err.responseText);
             if (retryCount > 0) {
                 console.log(actionDescription + " failed. Trying again.");
                 retryCount--;

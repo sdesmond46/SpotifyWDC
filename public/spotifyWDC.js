@@ -95,7 +95,7 @@ var spotifyRequestor;
     });
 
     function setupConnector() {
-        tableau.connectionName = "Spotify Connector";
+        tableau.connectionName = "Spotify Connector with Errors";
         tableau.connectionData = document.querySelector('input[name="term"]:checked').value;
         tableau.authType = tableau.authTypeEnum.custom;
         tableau.submit();
