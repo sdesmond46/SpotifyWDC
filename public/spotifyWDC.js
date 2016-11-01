@@ -1,374 +1,88 @@
 "use strict";
-
-var artistIDs = [];
-
-var s, params, access_token, refresh_token, error;;
+var spotifyRequestor;
 
 // Define our Web Data Connector
 (function() {
     var myConnector = tableau.makeConnector();
 
     myConnector.init = function(initCallback){
-        s = new SpotifyWebApi();
+        console.log("Initializing Web Data Connector. Phase is " + tableau.phase);
 
-        params = getHashParams();
-        
-        access_token = params.access_token,
-        refresh_token = params.refresh_token,
-        error = params.error;
-        
-        if (error) {
-            console.error("There was an error during the authentication");
-        }
-
-        if (!access_token) {
+        if (!SpotifyAuthentication.hasTokens()) {
+            console.log("We do not have SpotifyAuthentication tokens available");
             if (tableau.phase != tableau.phaseEnum.gatherDataPhase) {
-                window.location.href = "/login"
+                console.log("Redirecting to login page");
+                window.location.href = "/login";
+            } else {
+                tableau.abortForAuth("Missing SpotifyAuthentication!");
             }
-        } else {
-            toggleUIState(true);
+
+            // Early return here to avoid changing any other state
+            return;
         }
 
-        if  (tableau.phase == tableau.phaseEnum.interactivePhase || tableau.phase == tableau.phaseEnum.authPhase) {
-            tableau.password = access_token;
-        }
-      
+        console.log("Access token found!");
+        toggleUIState(true);
+
+        console.log("Setting tableau.password to access_token and refresh tokens");
+        tableau.password = JSON.stringify(SpotifyAuthentication.getTokens());
+
+        var s = new SpotifyWebApi();
+        s.setAccessToken(SpotifyAuthentication.getAccessToken());
+        spotifyRequestor = new SpotifyRequestor(s, tableau.connectionData, tableau.reportProgress);
+        
+        console.log("Calling initCallback");
         initCallback();
+
+        if (tableau.phase === tableau.phaseEnum.authPhase) {
+            // Immediately submit if we are running in the auth phase
+            tableau.submit();
+        }
     };
 
     myConnector.getSchema = function(schemaCallback) {
-        $.getJSON( "./schema.json" )
+        console.log("getSchema called. Making request to ./schema.json");
+        $.getJSON( "./schema_advanced.json" )
         .done(function(scehma_json) {
-            $.getJSON("./standard_connections.json")
-            .done(function(standard_connections_json) {
-                schemaCallback(scehma_json, standard_connections_json.connections);
-            })
-            .fail(function(jqxhr, textStatus, error) {
-                var err = textStatus + ", " + error;
-                console.log("Request Failed: " + err);
-            });
+            console.log("call to get schema finished");
+            schemaCallback(scehma_json.tables/*, scehma_json.standardConnections*/);
         })
         .fail(function(jqxhr, textStatus, error) {
             var err = textStatus + ", " + error;
-            console.log( "Request Failed: " + err );
+            console.log("Request Failed: " + err);
+            tableau.abortWithError(err);
         });
     }
 
-    myConnector.getData = function(table, doneCallback) {        
-        var promise;
-        s.setAccessToken(tableau.password); 
-        
-        var offset = 0, limit = 50, i;
-        var promises = [];
-        
-        var maxArtistIDs = 50;
-        var artistIDsSlice = [];
-        
-        switch(table.tableInfo.id) {
-            case "topArtists":
-                promise = getMyTopArtistsPromise(table); 
-                break;
-            case "topTracks":
-                promise = getMyTopTracksPromise(table);
-                break;
-            case "artists":
-                for (i = 1; i <= artistIDs.length; i++) {
-                    artistIDsSlice.push(artistIDs[i]);
-                    
-                    if ( (i % maxAristIDs) == 0 || i == artistIDs.length)
-                    promises.push(get<getMyArtistsPromise(table, artistIDsSlice));
-                    offset+=limit;   
-                }
-                
-                promise = Promise.all(promises);
-                break;
-            case "albums":
-                for (i = 0; i < 3; i++) {
-                    promises.push(getMyAlbumsPromise(table, offset, limit));
-                    offset+=limit;   
-                }
-                
-                promise = Promise.all(promises);
-                break;
-            case "tracks":
-                for (i = 0; i < 3; i++) {
-                    promises.push(getMyTracksPromise(table, offset, limit));
-                    offset+=limit;   
-                }
-                
-                promise = Promise.all(promises);
-                break;
-            default:
-                console.error("Unknown table ID");
-                break;
+    myConnector.getData = function(table, doneCallback) {
+        console.log("getData called for table " + table.tableInfo.id);
+        var tableFunctions = {
+            "topArtists": spotifyRequestor.getMyTopArtists.bind(spotifyRequestor),
+            "topTracks": spotifyRequestor.getMyTopTracks.bind(spotifyRequestor),
+            "artists": spotifyRequestor.getMySavedArtists.bind(spotifyRequestor),
+            "albums": spotifyRequestor.getMySavedAlbums.bind(spotifyRequestor),
+            "tracks": spotifyRequestor.getMySavedTracks.bind(spotifyRequestor)
+        };
+
+        if (!tableFunctions.hasOwnProperty(table.tableInfo.id)) {
+            tableau.abortWithError("Unknown table ID: " + table.tableInfo.id);
+            return;
         }
 
-        promise.then(function(response) {
+        tableFunctions[table.tableInfo.id]().then(function(rows) {
+            table.appendRows(rows);
+            doneCallback();
+        }, function(error) {
+             console.log("Error occured waiting for promises. Aborting");
+             tableau.abortWithError(error.toString());
              doneCallback();
-         }, function(error) {
-             tableau.abortWithError(error);
-             console.error(error);
          });
     }
 
     tableau.registerConnector(myConnector);
 
 
-    //-------------------------------API Requestors---------------------------
-        
-    function getMyTopArtistsPromise(table) { 
-        return new Promise(function(resolve, reject) {
-            var toRet = [];
-            var entry = [];
-
-            s.getMyTopArtists({time_range: tableau.connectionData}).then(function(data) {               
-                _.each(data.items, function(artist) {                   
-                    entry = {
-                        "followers": artist.followers ? artist.followers.total : 0,
-                        "genre1": artist.genres[0] || null,
-                        "genre2": artist.genres[1] || null,
-                        "href": artist.href,
-                        "id": artist.id,
-                        "image_link":artist.images[0] ? artist.images[0].url : null,
-                        "name": artist.name,
-                        "popularity":artist.popularity,
-                        "uri": artist.uri
-                    };
-
-                    toRet.push(entry)
-                });
-
-                table.appendRows(toRet);
-                resolve();
-
-            }, function(err) {
-                console.error(err);
-                Promise.reject(err);
-            });
-        });
-    }
-
-    function getMyTopTracksPromise(table) { 
-        return new Promise(function(resolve, reject) {
-            var toRet = [];
-            var entry = [];
-
-            s.getMyTopTracks({time_range: tableau.connectionData}).then(function(data) {               
-                _.each(data.items, function(track) {
-                    entry = {
-                        "album_id": track.album.id,
-                        "artist_id": track.artists[0].id,
-                        "artist_name": track.artists[0].name,
-                        "duration_ms": track.duration_ms,
-                        "explicit": track.explicit,
-                        "href": track.href,
-                        "id": track.id,
-                        "name": track.name,
-                        "preview_url": track.preview_url,
-                        "track_number": track.track_number,
-                        "uri": track.uri
-                    };
-
-                    toRet.push(entry)
-                });
-
-                table.appendRows(toRet);
-                resolve();
-
-            }, function(err) {
-                console.error(err);
-                Promise.reject(err);
-            });
-        });
-    }
-    
-    function getMyArtistsPromise(table, ids) { 
-        return new Promise(function(resolve, reject) {
-            var toRet = [];
-            var entry = [];
-            
-            var promise = getRelatedArtistsPromise();
-            
-            promise.then(function(response) {
-                s.getArtists(ids).then(function(data) {                
-                    _.each(data.artists, function(artist) {
-                        entry = {
-                            "followers": artist.followers ? artist.followers.total : 0,
-                            "genre1": artist.genres[0] || null,
-                            "genre2": artist.genres[1] || null,
-                            "href": artist.href,
-                            "id": artist.id,
-                            "image_link": artist.images[0] ? artist.images[0].url : null,
-                            "name": artist.name,
-                            "popularity":artist.popularity,
-                            "related_artist1_id": response[0] || null,
-                            "related_artist2_id":  response[1] || null,
-                            "related_artist3_id":  response[2] || null,
-                            "uri": artist.uri                        
-                        };
-
-                        toRet.push(entry)
-                    });
-
-                    table.appendRows(toRet);
-                    resolve();
-
-                }, function(err) {
-                    console.error(err);
-                    Promise.reject(err);
-                });
-            }, function(error) {
-                console.error(error);
-            });
-        });
-    }
-    
-    function getMyAlbumsPromise(table, offset, limit) {
-        return new Promise(function(resolve, reject) {
-            var toRet = [];
-            var entry = [];
-
-            s.getMySavedAlbums({limit: limit, offset: offset}).then(function(data) {               
-                _.each(data.items, function(albumObject) {
-                    entry = {
-                        "added_at": albumObject.added_at,
-                        "artist_id": albumObject.album.artists[0].id,
-                        "genre1": albumObject.album.genres[0] || null,
-                        "genre2": albumObject.album.genres[1] || null,
-                        "href": albumObject.album.href,
-                        "id": albumObject.album.id,
-                        "image_link": albumObject.album.images[0] ? albumObject.album.images[0].url : null,
-                        "name": albumObject.album.name,
-                        "popularity": albumObject.album.popularity,
-                        "release_date": albumObject.album.release_date,
-                        "type": albumObject.album.type,
-                        "uri": albumObject.album.uri
-                    };
-
-                    toRet.push(entry)
-                });
-
-                table.appendRows(toRet);
-                resolve();
-
-            }, function(err) {
-                console.error(err);
-                Promise.reject(err);
-            });
-        }); 
-    }
-    
-    function getMyTracksPromise(table, offset, limit) {
-        return new Promise(function(resolve, reject) {
-            var toRet = [];
-            var entry = [];
-
-            s.getMySavedTracks({limit: limit, offset: offset}).then(function(data) {               
-                var featurePromise = getTrackFeaturesPromise(data.items, offset, limit);
-                
-                featurePromise.then(function(response) {                    
-                    _.each(data.items, function(trackObject, index) {
-                        entry = {
-                            "added_at": trackObject.added_at,
-                            "album_id": trackObject.track.album.id,
-                            "artist_id": trackObject.track.artists[0].id,
-                            "artist_name": trackObject.track.artists[0].name,
-                            "duration_ms": trackObject.track.duration_ms,
-                            "explicit": trackObject.track.explicit,
-                            "href": trackObject.track.href,
-                            "id": trackObject.track.id,
-                            "name": trackObject.track.name,
-                            "preview_url": trackObject.track.preview_url,
-                            "track_number": trackObject.track.track_number,
-                            "uri": trackObject.track.uri,
-                            "danceability": response.audio_features[index].danceability,
-                            "energy": response.audio_features[index].energy,
-                            "key": response.audio_features[index].key,
-                            "loudness": response.audio_features[index].loudness,
-                            "mode": response.audio_features[index].mode,
-                            "speechiness": response.audio_features[index].speechiness,
-                            "acousticness": response.audio_features[index].acousticness,
-                            "instrumentalness": response.audio_features[index].instrumentalness,
-                            "liveness": response.audio_features[index].liveness,
-                            "valence": response.audio_features[index].valence,
-                            "tempo": response.audio_features[index].tempo,
-                            "time_signature": response.audio_features[index].time_signature
-                        };
-
-                        toRet.push(entry)
-                        artistIDs.push(trackObject.track.artists[0].id);
-                    });
-                    
-                    
-                    table.appendRows(toRet);
-                    resolve();
-                }, function(error) {
-                    console.error(error);
-                });
-            }, function(err) {
-                console.error(err);
-                Promise.reject(err);
-            });
-        });   
-    }
-    
-    function getTrackFeaturesPromise(items, limit, offset) {
-        var ids = [];
-        _.each(items, function(trackObject) {
-           ids.push(trackObject.track.id); 
-        });
-        return new Promise(function(resolve, reject) {
-            s.getAudioFeaturesForTracks(ids).then(function(data) {               
-                resolve(data);
-            }, function(err) {
-                console.error(err);
-                Promise.reject(err);
-            });
-        });         
-    }
-    
-    function getRelatedArtistsPromise() { 
-        return new Promise(function(resolve, reject) {
-            var toRet = [];
-            var i = 0;
-
-            s.getArtistRelatedArtists(artistIDs[0]).then(function(data) {               
-                for (i = 0; i < 3; i++) {
-                    if (data.artists[i]) {
-                        toRet.push(data.artists[i].id);
-                    }
-                }
-                
-                resolve(toRet);
-
-            }, function(err) {
-                console.error(err);
-                Promise.reject(err);
-            });
-        });
-    }
-    
-    function getArtistsAlbumsPromise() { 
-        return new Promise(function(resolve, reject) {
-            var toRet = [];
-            var i = 0;
-
-            s.getArtistRelatedArtists(artistIDs[0]).then(function(data) {               
-                for (i = 0; i < 3; i++) {
-                    if (data.artists[i]) {
-                        toRet.push(data.artists[i].id);
-                    }
-                }
-                
-                resolve(toRet);
-
-            }, function(err) {
-                console.error(err);
-                Promise.reject(err);
-            });
-        });
-    } 
-   
+    //-------------------------------Connector UI---------------------------//
 
     $(document).ready(function() {  
         $("#getdata").click(function() { // This event fires when a button is clicked
@@ -376,39 +90,12 @@ var s, params, access_token, refresh_token, error;;
         });
     });
 
-    /**
-     * Obtains parameters from the hash of the URL
-     * @return Object
-     */
-    function getHashParams() {
-        var hashParams = {};
-        var e, r = /([^&;=]+)=?([^&;]*)/g,
-            q = window.location.hash.substring(1);
-        while (e = r.exec(q)) {
-            hashParams[e[1]] = decodeURIComponent(e[2]);
-        }
-        return hashParams;
-    }
-
-
     function setupConnector() {
         tableau.connectionName = "Spotify Connector";
         tableau.connectionData = document.querySelector('input[name="term"]:checked').value;
+        tableau.authType = tableau.authTypeEnum.custom;
         tableau.submit();
     };
-
-    // Note: Refresh tokens are valid forever, just need to get a new access token.
-    // Refresh tokens can me manually revoked but won"t expire
-    function refreshToken() {
-        $.ajax({
-            url: "/refresh_token",
-            data: {
-                "refresh_token": refresh_token
-            }
-        }).done(function(data) {
-            access_token = data.access_token;
-        });
-    }
     
     function toggleUIState(showContent) {
         if (showContent) {
