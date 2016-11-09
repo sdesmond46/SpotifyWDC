@@ -44,7 +44,7 @@ var spotifyRequestor;
     };
 
     myConnector.getSchema = function(schemaCallback) {
-        var schemaUrl = "./schema_advanced.jsons";
+        var schemaUrl = "./schema_advanced.json";
         console.log("getSchema called. Making request to " + schemaUrl);
         $.getJSON(schemaUrl)
         .done(function(scehma_json) {
