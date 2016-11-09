@@ -7,6 +7,7 @@ var PORT = 4000;
 
 var os = require("os");
 var hostName = os.hostname();
+hostName = "localhost";
 var redirectUri = "http://" + hostName + ":" + PORT + "/callback";
 
 module.exports = {
